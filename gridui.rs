@@ -9,20 +9,21 @@ extern crate libc;
 extern crate "rust-windows" as windows;
 
 use std::ptr;
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::comm::channel;
 
 use libc::{c_int};
 
 use windows::main_window_loop;
-use windows::ll::types::{UINT, HBRUSH, COLORREF};
-use windows::ll::all::{PostQuitMessage, CREATESTRUCT};
+use windows::ll::types::{UINT, HBRUSH, COLORREF, LPARAM, WPARAM, LRESULT};
+use windows::ll::all::{PostQuitMessage, GetSysColor, CREATESTRUCT};
+use windows::ll::gdi::{GetStockObject, SetDCBrushColor};
 use windows::instance::Instance;
 use windows::resource::*;
 use windows::window::{WindowImpl, Window, WndClass, WindowParams};
-use windows::window::{OnCreate, OnSize, OnDestroy, OnPaint, OnFocus, OnEraseBackground};
+use windows::window::{OnCreate, OnSize, OnDestroy, OnPaint, OnFocus, OnEraseBackground, OnMessage};
 use windows::window;
-use windows::gdi::PaintDc;
+use windows::gdi::{PaintDc};
 use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
@@ -38,32 +39,47 @@ enum InputEvent {
     Close,
     MouseDown(u32, u32),
     KeyDown(u32),
+    Size(u32, u32),
 }
 
-#[deriving(Copy)]
+#[deriving(Copy, Clone)]
 struct Glyph {
     character: uint,
     background: u32,
     foreground: u32,
 }
 
+#[deriving(Clone)]
 struct Screen {
     glyphs: Vec<Glyph>,
     width: uint,
 }
 
+struct MainFrameState {
+    screen: Screen,
+    announced_grid_size: (i32, i32),
+}
+
 struct MainFrame {
     win: Window,
     font: RefCell<Option<Font>>,
-    screen: Screen,
     input_sink: Sender<InputEvent>,
+    screen_source: Receiver<Screen>,
     grid_height: uint,
+    state: RefCell<MainFrameState>,
 }
 
-wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFOCUS, WM_PAINT, WM_ERASEBKGND)
+const WM_CHECK_SCREENS : UINT = 0x0401;
+
+wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFOCUS, WM_PAINT, WM_ERASEBKGND, ANY)
 
 impl OnCreate for MainFrame {
     fn on_create(&self, _cs: &CREATESTRUCT) -> bool {
+        
+        //if let Some(rect) = self.win.client_rect() {
+        //    self.announce_grid_size((rect.right-rect.left) as int, (rect.bottom-rect.top) as int);
+        //}
+        
         let font_attr = FontAttr {
             height: self.grid_height as int,
             width: (self.grid_height/2) as int,
@@ -81,8 +97,10 @@ impl OnCreate for MainFrame {
             family: Family::FF_DONTCARE,
             face: Some("Courier New".to_string()),
         };
+        
         let font = font::Font::new(&font_attr);
         debug!("font: {}", font); // the trait `core::fmt::Show` is not implemented for the type `rust-windows::font::Font`
+        
         match font {
             None => false,
             Some(f) => {
@@ -90,15 +108,24 @@ impl OnCreate for MainFrame {
                 true
             }
         }
+        
+        
     }
 }
 
 impl OnSize for MainFrame {
     fn on_size(&self, width: int, height: int) {
-        // SWP_NOOWNERZORDER | SWP_NOZORDER
-        //let h = self.text_height;
-        //self.edit.borrow().expect("edit is empty")
-        //    .set_window_pos(0, h, width, height - h, 0x200 | 0x4);
+        let grid_width = self.grid_height/2;
+        let cols = width as u32 / grid_width as u32;
+        let rows = height as u32 / self.grid_height as u32;
+        
+        let size = (cols as i32, rows as i32);
+        self.with_state_mut(|state: &mut MainFrameState| {
+            if size != state.announced_grid_size {
+                state.announced_grid_size = size;
+                self.input_sink.send(InputEvent::Size(cols, rows));
+            }
+        });
     }
 }
 
@@ -117,14 +144,34 @@ impl OnPaint for MainFrame {
         let pdc = PaintDc::new(self).expect("Paint DC");
         pdc.dc.select_font(&font.expect("font is empty"));
         
-        let grid_width = self.grid_height/2;
-        for (row_idx, row) in self.screen.glyphs.chunks(self.screen.width).enumerate() {
-            for (col_idx, cell) in row.iter().enumerate() {
-                pdc.dc.set_text_color(cell.foreground as COLORREF);
-                pdc.dc.set_background_color(cell.background as COLORREF);
-                pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, "0");
+        self.with_state(|state: & MainFrameState| {
+            let grid_width = self.grid_height/2;
+            let ref screen = state.screen;
+            for (row_idx, row) in screen.glyphs.chunks(screen.width).enumerate() {
+                for (col_idx, cell) in row.iter().enumerate() {
+                    pdc.dc.set_text_color(cell.foreground as COLORREF);
+                    pdc.dc.set_background_color(cell.background as COLORREF);
+                    pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, "0");
+                }
             }
-        }
+            
+            
+            if let Some(client_rect) = self.win.client_rect() {
+                let max_filled_x = screen.width * grid_width;
+                let max_filled_y = (screen.glyphs.len() / screen.width) * self.grid_height;
+                
+                let filler_color = unsafe { GetSysColor(15 /* COLOR_3DFACE */) as COLORREF };
+                unsafe { SetDCBrushColor(pdc.dc.raw, filler_color) };
+                let null_pen = unsafe { GetStockObject(8 /* NULL_PEN */) };
+                let dc_brush = unsafe { GetStockObject(18 /* DC_BRUSH */) };
+                
+                pdc.dc.select_object(null_pen);
+                pdc.dc.select_object(dc_brush);
+                pdc.dc.rect((max_filled_x as int, 0), (client_rect.right as int + 1, client_rect.bottom as int + 1));
+                pdc.dc.rect((0, max_filled_y as int), (max_filled_x as int + 1, client_rect.bottom as int + 1));
+            }
+        });
+        
     }
 }
 
@@ -140,8 +187,17 @@ impl OnEraseBackground for MainFrame {
     }
 }
 
+impl OnMessage for MainFrame {
+    fn on_message(&self, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+        if msg==WM_CHECK_SCREENS {
+            self.check_for_new_screen();
+            return Some(0);
+        }
+        None
+    }
+}
 impl MainFrame {
-    fn new(instance: Instance, title: String, input_sink: Sender<InputEvent>) -> Option<Window> {
+    fn new(instance: Instance, title: String, input_sink: Sender<InputEvent>, screen_source: Receiver<Screen>) -> Option<Window> {
         let icon = Image::load_resource(instance, IDI_ICON, ImageType::IMAGE_ICON, 0, 0);
         let wnd_class = WndClass {
             classname: "MainFrame".to_string(),
@@ -163,10 +219,14 @@ impl MainFrame {
             win: Window::null(),
             font: RefCell::new(None),
             input_sink: input_sink,
-            screen: Screen{
-              width:20,
-              glyphs: Vec::from_fn(20*6, |_| { Glyph{character:0, foreground:0xff5555, background: 0x000000}})
-            },
+            screen_source: screen_source,
+            state: RefCell::new(MainFrameState{
+                screen: Screen{
+                    width:20,
+                    glyphs: Vec::from_fn(20*6, |_| { Glyph{character:0, foreground:0xff5555, background: 0x000000}})
+                },
+                announced_grid_size: (-1,-1),  
+            }),
             grid_height: 30,
         };
 
@@ -185,24 +245,71 @@ impl MainFrame {
         Window::new(instance, Some(wproc as Box<WindowImpl+Send>),
                     wnd_class.classname.as_slice(), &win_params)
     }
+    
+    fn with_state_mut(&self, f: |&mut MainFrameState|) {
+        if let Some(mut state) = self.state.try_borrow_mut() {
+            f(state.deref_mut());
+        }
+    }
+    
+    fn with_state(&self, f: |&MainFrameState|) {
+        if let Some(state) = self.state.try_borrow() {
+            f(state.deref());
+        }
+    }
+    
+    fn check_for_new_screen(&self) {
+        let mut new_screen = None;
+        loop {
+            match(self.screen_source.try_recv()) {
+                Ok(screen) => {new_screen = Some(screen) },
+                Err(_) => { break; }
+            }
+        }
+        
+        if let Some(s) = new_screen {
+            self.with_state_mut(|state: &mut MainFrameState| {
+                state.screen = s.clone();
+                self.win.invalidate(false);
+            });
+        }
+    }
 }
 
 fn main() {
     window::init_window_map();
 
     let (tx, rx) = channel();
+    let (screen_tx, screen_rx) = channel();
     
-    spawn(move|| {
-        println!("Received {}", rx.recv())
-    });
     
     let instance = Instance::main_instance();
-    let main = MainFrame::new(instance, "Grid UI".to_string(), tx);
+    let main = MainFrame::new(instance, "Grid UI".to_string(), tx, screen_rx);
     let main = main.unwrap();
 
     main.show(1);
     main.update();
 
+    spawn(move|| {
+        loop {
+            match rx.recv() {
+                InputEvent::Close => { return; }
+                InputEvent::Size(cols, rows) => {
+                    println!("Resized to {} by {}", cols, rows);
+                    screen_tx.send(Screen{
+                      width:cols as uint,
+                      glyphs: Vec::from_fn((cols*rows) as uint, |_| { Glyph{character:0, foreground:0x55ff55, background: 0x000000}})
+                    });
+                    main.post_message(WM_CHECK_SCREENS,0,0);
+                }
+                x => {
+                    println!("{}", x);
+                    
+                }
+            }
+        }
+    });
+    
     let exit_code = main_window_loop();
     std::os::set_exit_status(exit_code as int);
 }
