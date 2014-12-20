@@ -3,15 +3,20 @@
 #[phase(plugin, link)]
 extern crate log;
 
+extern crate libc;
+
 #[phase(plugin, link)]
 extern crate "rust-windows" as windows;
 
 use std::ptr;
 use std::cell::RefCell;
+use std::comm::channel;
+
+use libc::{c_int};
 
 use windows::main_window_loop;
 use windows::ll::types::{UINT, HBRUSH, COLORREF};
-use windows::ll::all::CREATESTRUCT;
+use windows::ll::all::{PostQuitMessage, CREATESTRUCT};
 use windows::instance::Instance;
 use windows::resource::*;
 use windows::window::{WindowImpl, Window, WndClass, WindowParams};
@@ -28,6 +33,13 @@ static MENU_MAIN: int = 0x201;
 //static MENU_NEW: int = 0x202;
 //static MENU_EXIT: int = 0x203;
 
+#[deriving(Show)]
+enum InputEvent {
+    Close,
+    MouseDown(u32, u32),
+    KeyDown(u32),
+}
+
 #[deriving(Copy)]
 struct Glyph {
     character: uint,
@@ -42,33 +54,19 @@ struct Screen {
 
 struct MainFrame {
     win: Window,
-    title: String,
-    text_height: int,
     font: RefCell<Option<Font>>,
     screen: Screen,
+    input_sink: Sender<InputEvent>,
+    grid_height: uint,
 }
 
 wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFOCUS, WM_PAINT, WM_ERASEBKGND)
 
 impl OnCreate for MainFrame {
     fn on_create(&self, _cs: &CREATESTRUCT) -> bool {
-        let rect = self.win.client_rect().unwrap();
-        let params = WindowParams {
-            window_name: "Hello World".to_string(),
-            style: window::WS_CHILD | window::WS_VISIBLE | window::WS_BORDER | window::WS_VSCROLL |
-                window::ES_AUTOVSCROLL | window::ES_MULTILINE | window::ES_NOHIDESEL,
-            x: 0,
-            y: self.text_height,
-            width: rect.right as int,
-            height: rect.bottom as int - self.text_height,
-            parent: self.win,
-            menu: ptr::null_mut(),
-            ex_style: 0,
-        };
-        
         let font_attr = FontAttr {
-            height: 30,
-            width: 15,
+            height: self.grid_height as int,
+            width: (self.grid_height/2) as int,
             escapement: 0,
             orientation: 0,
             weight: 600, // FW_NORMAL. TODO use FW_DONTCARE (0)?
@@ -104,7 +102,14 @@ impl OnSize for MainFrame {
     }
 }
 
-impl OnDestroy for MainFrame {}
+impl OnDestroy for MainFrame {
+    fn on_destroy(&self) {
+        unsafe {
+            PostQuitMessage(0 as c_int);
+        }
+        self.input_sink.send(InputEvent::Close);
+    }
+}
 
 impl OnPaint for MainFrame {
     fn on_paint(&self) {
@@ -112,11 +117,12 @@ impl OnPaint for MainFrame {
         let pdc = PaintDc::new(self).expect("Paint DC");
         pdc.dc.select_font(&font.expect("font is empty"));
         
+        let grid_width = self.grid_height/2;
         for (row_idx, row) in self.screen.glyphs.chunks(self.screen.width).enumerate() {
             for (col_idx, cell) in row.iter().enumerate() {
                 pdc.dc.set_text_color(cell.foreground as COLORREF);
                 pdc.dc.set_background_color(cell.background as COLORREF);
-                pdc.dc.text_out((col_idx*15) as int, (row_idx*30) as int, "0");
+                pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, "0");
             }
         }
     }
@@ -135,7 +141,7 @@ impl OnEraseBackground for MainFrame {
 }
 
 impl MainFrame {
-    fn new(instance: Instance, title: String, text_height: int) -> Option<Window> {
+    fn new(instance: Instance, title: String, input_sink: Sender<InputEvent>) -> Option<Window> {
         let icon = Image::load_resource(instance, IDI_ICON, ImageType::IMAGE_ICON, 0, 0);
         let wnd_class = WndClass {
             classname: "MainFrame".to_string(),
@@ -155,13 +161,13 @@ impl MainFrame {
 
         let wproc = box MainFrame {
             win: Window::null(),
-            title: title.clone(),
-            text_height: text_height,
             font: RefCell::new(None),
+            input_sink: input_sink,
             screen: Screen{
               width:20,
               glyphs: Vec::from_fn(20*6, |_| { Glyph{character:0, foreground:0xff5555, background: 0x000000}})
             },
+            grid_height: 30,
         };
 
         let win_params = WindowParams {
@@ -184,8 +190,14 @@ impl MainFrame {
 fn main() {
     window::init_window_map();
 
+    let (tx, rx) = channel();
+    
+    spawn(move|| {
+        println!("Received {}", rx.recv())
+    });
+    
     let instance = Instance::main_instance();
-    let main = MainFrame::new(instance, "Hello Rust".to_string(), 20);
+    let main = MainFrame::new(instance, "Grid UI".to_string(), tx);
     let main = main.unwrap();
 
     main.show(1);
