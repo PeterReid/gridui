@@ -9,7 +9,7 @@ extern crate libc;
 extern crate "rust-windows" as windows;
 
 use std::ptr;
-use std::cell::{RefCell, RefMut};
+use std::cell::{RefCell};
 use std::comm::channel;
 
 use libc::{c_int};
@@ -189,7 +189,7 @@ impl OnEraseBackground for MainFrame {
 }
 
 impl OnMessage for MainFrame {
-    fn on_message(&self, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+    fn on_message(&self, msg: UINT, _: WPARAM, _: LPARAM) -> Option<LRESULT> {
         if msg==WM_CHECK_SCREENS {
             self.check_for_new_screen();
             return Some(0);
@@ -262,7 +262,7 @@ impl MainFrame {
     fn check_for_new_screen(&self) {
         let mut new_screen = None;
         loop {
-            match(self.screen_source.try_recv()) {
+            match self.screen_source.try_recv() {
                 Ok(screen) => {new_screen = Some(screen) },
                 Err(_) => { break; }
             }
