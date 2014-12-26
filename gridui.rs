@@ -144,25 +144,22 @@ impl OnPaint for MainFrame {
         pdc.dc.select_font(&font.expect("font is empty"));
         
         self.with_state(|state: & MainFrameState| {
-            if state.screen.width<=0 {
-                return;
-            }
-            
-            let grid_width = self.grid_height/2;
             let ref screen = state.screen;
-            for (row_idx, row) in screen.glyphs.chunks(screen.width).enumerate() {
-                for (col_idx, cell) in row.iter().enumerate() {
-                    pdc.dc.set_text_color(cell.foreground as COLORREF);
-                    pdc.dc.set_background_color(cell.background as COLORREF);
-                    
-                    pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, String::from_char(1, cell.character as u8 as char).as_slice());
+            let grid_width = self.grid_height/2;
+            if state.screen.width > 0 {
+                for (row_idx, row) in screen.glyphs.chunks(screen.width).enumerate() {
+                    for (col_idx, cell) in row.iter().enumerate() {
+                        pdc.dc.set_text_color(cell.foreground as COLORREF);
+                        pdc.dc.set_background_color(cell.background as COLORREF);
+                        
+                        pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, String::from_char(1, cell.character as u8 as char).as_slice());
+                    }
                 }
             }
             
-            
             if let Some(client_rect) = self.win.client_rect(){
                 let max_filled_x = screen.width * grid_width;
-                let max_filled_y = (screen.glyphs.len() / screen.width) * self.grid_height;
+                let max_filled_y = if screen.width>0 { (screen.glyphs.len() / screen.width) * self.grid_height } else { 0 };
                 
                 let filler_color = unsafe { GetSysColor(15 /* COLOR_3DFACE */) as COLORREF };
                 unsafe { SetDCBrushColor(pdc.dc.raw, filler_color) };
