@@ -21,7 +21,7 @@ use windows::ll::gdi::{GetStockObject, SetDCBrushColor};
 use windows::instance::Instance;
 use windows::resource::*;
 use windows::window::{WindowImpl, Window, WndClass, WindowParams};
-use windows::window::{OnCreate, OnSize, OnDestroy, OnPaint, OnFocus, OnEraseBackground, OnMessage};
+use windows::window::{OnCreate, OnSize, OnDestroy, OnPaint, OnEraseBackground, OnMessage};
 use windows::window::{OnLeftButtonDown, OnLeftButtonUp, OnKeyDown, OnKeyUp};
 use windows::window;
 use windows::gdi::{PaintDc};
@@ -72,15 +72,10 @@ struct MainFrame {
 
 const WM_CHECK_SCREENS : UINT = 0x0401;
 
-wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_KEYDOWN, WM_KEYUP, WM_SIZE, WM_SETFOCUS, WM_PAINT, WM_ERASEBKGND, ANY)
+wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_KEYDOWN, WM_KEYUP, WM_SIZE, WM_PAINT, WM_ERASEBKGND, ANY)
 
 impl OnCreate for MainFrame {
     fn on_create(&self, _cs: &CREATESTRUCT) -> bool {
-        
-        //if let Some(rect) = self.win.client_rect() {
-        //    self.announce_grid_size((rect.right-rect.left) as int, (rect.bottom-rect.top) as int);
-        //}
-        
         let font_attr = FontAttr {
             height: self.grid_height as int,
             width: (self.grid_height/2) as int,
@@ -108,8 +103,6 @@ impl OnCreate for MainFrame {
                 true
             }
         }
-        
-        
     }
 }
 
@@ -174,12 +167,6 @@ impl OnPaint for MainFrame {
             }
         });
         
-    }
-}
-
-impl OnFocus for MainFrame {
-    fn on_focus(&self, _w: Window) {
-        //self.edit.borrow().expect("edit is empty").set_focus();
     }
 }
 
