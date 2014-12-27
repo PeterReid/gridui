@@ -22,6 +22,7 @@ use windows::instance::Instance;
 use windows::resource::*;
 use windows::window::{WindowImpl, Window, WndClass, WindowParams};
 use windows::window::{OnCreate, OnSize, OnDestroy, OnPaint, OnFocus, OnEraseBackground, OnMessage};
+use windows::window::{OnLeftButtonDown, OnLeftButtonUp, OnKeyDown, OnKeyUp};
 use windows::window;
 use windows::gdi::{PaintDc};
 use windows::font::Font;
@@ -71,7 +72,7 @@ struct MainFrame {
 
 const WM_CHECK_SCREENS : UINT = 0x0401;
 
-wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFOCUS, WM_PAINT, WM_ERASEBKGND, ANY)
+wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_KEYDOWN, WM_KEYUP, WM_SIZE, WM_SETFOCUS, WM_PAINT, WM_ERASEBKGND, ANY)
 
 impl OnCreate for MainFrame {
     fn on_create(&self, _cs: &CREATESTRUCT) -> bool {
@@ -188,6 +189,35 @@ impl OnEraseBackground for MainFrame {
     }
 }
 
+impl OnLeftButtonDown for MainFrame {
+    fn on_left_button_down(&self, x: int, y: int, _flags: u32) {
+        let grid_width = self.grid_height/2;
+        let col = (x as u32) / (grid_width as u32);
+        let row = (y as u32) / (self.grid_height as u32);
+        self.input_sink.send(InputEvent::MouseDown(col as u32, row as u32));
+    }
+}
+
+impl OnLeftButtonUp for MainFrame {
+    fn on_left_button_up(&self, _x: int, _y: int, _flags: u32) {
+        
+    }
+}
+
+impl OnKeyDown for MainFrame {
+    fn on_key_down(&self, keycode: u8, flags: u32) -> bool {
+        println!("Key down {} {}", keycode, flags);
+        return true;
+    }
+}
+
+impl OnKeyUp for MainFrame {
+    fn on_key_up(&self, keycode: u8, flags: u32) -> bool {
+        println!("Key up {} {}", keycode, flags);
+        return true;
+    }
+}
+
 impl OnMessage for MainFrame {
     fn on_message(&self, msg: UINT, _: WPARAM, _: LPARAM) -> Option<LRESULT> {
         if msg==WM_CHECK_SCREENS {
@@ -277,36 +307,101 @@ impl MainFrame {
     }
 }
 
-fn main() {
-    let (tx, rx) = channel();
-    let (screen_tx, screen_rx) = channel();
+trait GridUiInterface {
+    fn send_screen(&self, screen: Screen);
+    fn get_input_event(&self) -> InputEvent;
+}
+
+struct WindowsGridUi {
+    screen_sink: Sender<Screen>,
+    input_event_source: Receiver<InputEvent>,
+    window: Window,
+}
+
+impl WindowsGridUi {
+    fn new() -> WindowsGridUi {
+        let (tx, rx) = channel();
+        let (screen_tx, screen_rx) = channel();
+        
+        let instance = Instance::main_instance();
+
+        let (window_tx, window_rx) = channel();
+        spawn(move|| {
+            let win = MainFrame::new(instance, "Grid UI".to_string(), tx, screen_rx).expect("Failed to create main window");
+            win.show(1);
+            win.update();
+            
+            window_tx.send(win);
+            
+            let exit_code = main_window_loop();
+            std::os::set_exit_status(exit_code as int);
+        });
+        
+        WindowsGridUi {
+            window: window_rx.recv(),
+            screen_sink: screen_tx,
+            input_event_source: rx,
+        }
+    }
+}
+
+impl GridUiInterface for WindowsGridUi {
+    fn send_screen(&self, screen: Screen) {
+        self.screen_sink.send(screen);
+        self.window.post_message(WM_CHECK_SCREENS,0,0);
+    }
     
-    let instance = Instance::main_instance();
-    let main = MainFrame::new(instance, "Grid UI".to_string(), tx, screen_rx);
-    let main = main.expect("Failed to create main window");
+    fn get_input_event(&self) -> InputEvent {
+        self.input_event_source.recv()
+    }
+}
 
-    main.show(1);
-    main.update();
-
-    spawn(move|| {
-        loop {
-            match rx.recv() {
-                InputEvent::Close => { return; }
-                InputEvent::Size(cols, rows) => {
-                    println!("Resized to {} by {}", cols, rows);
-                    screen_tx.send(Screen{
-                        width:cols as uint,
-                        glyphs: Vec::from_fn((cols*rows) as uint, |_| { Glyph{character:0x40, foreground:0x55ff55, background: 0x000000}})
-                    });
-                    main.post_message(WM_CHECK_SCREENS,0,0);
-                }
-                x => {
-                    println!("{}", x);
-                }
+fn run_window() {
+    let ui = WindowsGridUi::new();
+    
+    let mut clicked = std::collections::HashSet::new();
+    let mut screen_cols = 0;
+    let mut screen_rows = 0;
+    loop {
+        // Run virtual machine...
+        // If it issued an interrupt, process it. 
+        // - One of those is the get-input interrupt.
+        // - One of those is the show-screen interrupt.
+        // - One of them is propose hyperlink
+        
+        match ui.get_input_event() {
+            InputEvent::Close => { return; }
+            InputEvent::Size(cols, rows) => {
+                println!("Resized to {} by {}", cols, rows);
+                screen_cols = cols;
+                screen_rows = rows;
+            }
+            InputEvent::MouseDown(col, row) => {
+                clicked.insert((col, row));
+            }
+            x => {
+                println!("{}", x);
             }
         }
-    });
-    
-    let exit_code = main_window_loop();
-    std::os::set_exit_status(exit_code as int);
+        
+        if screen_cols>0 {
+            ui.send_screen(Screen{
+                width:screen_cols as uint,
+                glyphs: Vec::from_fn((screen_cols*screen_rows) as uint, |idx| {
+                    let col = idx as u32 % screen_cols;
+                    let row = idx as u32 / screen_cols;
+                    Glyph{
+                        character:0x30 + (screen_rows%10) as uint, 
+                        foreground: if clicked.contains(&(col,row)) { 0x000000 } else { 0x55ff55 }, 
+                        background: if clicked.contains(&(col,row)) { 0x55ff55 } else { 0x000000 }
+                    }
+                })
+            });
+        }
+        
+    }
+}
+
+fn main() {
+    run_window();
 }
