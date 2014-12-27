@@ -8,9 +8,13 @@ extern crate libc;
 #[phase(plugin, link)]
 extern crate "rust-windows" as windows;
 
+#[phase(plugin, link)]
+extern crate "mips_cpu" as mips;
+
 use std::ptr;
 use std::cell::{RefCell};
 use std::comm::channel;
+use std::io::File;
 
 use libc::{c_int};
 
@@ -28,6 +32,8 @@ use windows::gdi::{PaintDc};
 use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
+
+use mips::cpu::{MipsCpu, FaultType};
 
 // TODO duplicate of hello.rc
 static IDI_ICON: int = 0x101;
@@ -343,52 +349,80 @@ impl GridUiInterface for WindowsGridUi {
     }
 }
 
-fn run_window() {
+fn place_code(cpu: &mut MipsCpu, code: &[u8], index: u32) {
+    // Assumed code length is a multiple of 4
+    for (offset, chunk) in code.chunks(4).enumerate() {
+        let val = (chunk[0] as u32) | (chunk[1] as u32 << 8) | (chunk[2] as u32 << 16) | (chunk[3] as u32 << 24);
+        cpu.set_mem(index + 4*(offset as u32), val);
+    }
+}
+
+fn run_window(code: Vec<u8>) {
     let ui = WindowsGridUi::new();
+    
+    let mut cpu = MipsCpu::new();
+    
+    place_code(&mut cpu, code.as_slice(), 0);
     
     let mut clicked = std::collections::HashSet::new();
     let mut screen_cols = 0;
     let mut screen_rows = 0;
     loop {
-        // Run virtual machine...
-        // If it issued an interrupt, process it. 
-        // - One of those is the get-input interrupt.
-        // - One of those is the show-screen interrupt.
-        // - One of them is propose hyperlink
-        
-        match ui.get_input_event() {
-            InputEvent::Close => { return; }
-            InputEvent::Size(cols, rows) => {
-                println!("Resized to {} by {}", cols, rows);
-                screen_cols = cols;
-                screen_rows = rows;
+        if let Some(interrupt) = cpu.run(7) {
+            println!("Interrupt: {}", interrupt);
+            match interrupt {
+                FaultType::Syscall => {
+                    println!("Issued syscall: {}", cpu.regs[2]);
+                    cpu.clear_fault();
+                },
+                _ => {
+                
+                }
             }
-            InputEvent::MouseDown(col, row) => {
-                clicked.insert((col, row));
+            // Run virtual machine...
+            // If it issued an interrupt, process it. 
+            // - One of those is the get-input interrupt.
+            // - One of those is the show-screen interrupt.
+            // - One of them is propose hyperlink
+            
+            match ui.get_input_event() {
+                InputEvent::Close => { return; }
+                InputEvent::Size(cols, rows) => {
+                    println!("Resized to {} by {}", cols, rows);
+                    screen_cols = cols;
+                    screen_rows = rows;
+                }
+                InputEvent::MouseDown(col, row) => {
+                    clicked.insert((col, row));
+                }
+                x => {
+                    println!("{}", x);
+                }
             }
-            x => {
-                println!("{}", x);
+            
+            if screen_cols>0 {
+                ui.send_screen(Screen{
+                    width:screen_cols as uint,
+                    glyphs: Vec::from_fn((screen_cols*screen_rows) as uint, |idx| {
+                        let col = idx as u32 % screen_cols;
+                        let row = idx as u32 / screen_cols;
+                        Glyph{
+                            character:0x30 + (screen_rows%10) as uint, 
+                            foreground: if clicked.contains(&(col,row)) { 0x000000 } else { 0x55ff55 }, 
+                            background: if clicked.contains(&(col,row)) { 0x55ff55 } else { 0x000000 }
+                        }
+                    })
+                });
             }
+        } else {
+            // Signal that the CPU is busy
+            println!("CPU hung");
+            break;
         }
-        
-        if screen_cols>0 {
-            ui.send_screen(Screen{
-                width:screen_cols as uint,
-                glyphs: Vec::from_fn((screen_cols*screen_rows) as uint, |idx| {
-                    let col = idx as u32 % screen_cols;
-                    let row = idx as u32 / screen_cols;
-                    Glyph{
-                        character:0x30 + (screen_rows%10) as uint, 
-                        foreground: if clicked.contains(&(col,row)) { 0x000000 } else { 0x55ff55 }, 
-                        background: if clicked.contains(&(col,row)) { 0x55ff55 } else { 0x000000 }
-                    }
-                })
-            });
-        }
-        
     }
 }
 
 fn main() {
-    run_window();
+    let contents = File::open(&Path::new("asm/mips1-repositioned.bin")).read_to_end().unwrap_or_else(|_| { panic!("Could not read MIPS code"); } );
+    run_window(contents);
 }
