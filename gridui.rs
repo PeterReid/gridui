@@ -357,69 +357,89 @@ fn place_code(cpu: &mut MipsCpu, code: &[u8], index: u32) {
     }
 }
 
-fn run_window(code: Vec<u8>) {
-    let ui = WindowsGridUi::new();
-    
-    let mut cpu = MipsCpu::new();
-    
-    place_code(&mut cpu, code.as_slice(), 0);
-    
-    let mut clicked = std::collections::HashSet::new();
-    let mut screen_cols = 0;
-    let mut screen_rows = 0;
-    loop {
-        if let Some(interrupt) = cpu.run(7) {
-            println!("Interrupt: {}", interrupt);
-            match interrupt {
-                FaultType::Syscall => {
-                    println!("Issued syscall: {}", cpu.regs[2]);
-                    cpu.clear_fault();
-                },
-                _ => {
-                
-                }
-            }
-            // Run virtual machine...
-            // If it issued an interrupt, process it. 
-            // - One of those is the get-input interrupt.
-            // - One of those is the show-screen interrupt.
-            // - One of them is propose hyperlink
-            
-            match ui.get_input_event() {
-                InputEvent::Close => { return; }
-                InputEvent::Size(cols, rows) => {
-                    println!("Resized to {} by {}", cols, rows);
-                    screen_cols = cols;
-                    screen_rows = rows;
-                }
-                InputEvent::MouseDown(col, row) => {
-                    clicked.insert((col, row));
-                }
-                x => {
-                    println!("{}", x);
-                }
-            }
-            
-            if screen_cols>0 {
-                ui.send_screen(Screen{
-                    width:screen_cols as uint,
-                    glyphs: Vec::from_fn((screen_cols*screen_rows) as uint, |idx| {
-                        let col = idx as u32 % screen_cols;
-                        let row = idx as u32 / screen_cols;
-                        Glyph{
-                            character:0x30 + (screen_rows%10) as uint, 
-                            foreground: if clicked.contains(&(col,row)) { 0x000000 } else { 0x55ff55 }, 
-                            background: if clicked.contains(&(col,row)) { 0x55ff55 } else { 0x000000 }
-                        }
-                    })
-                });
-            }
-        } else {
-            // Signal that the CPU is busy
-            println!("CPU hung");
-            break;
+struct UiRunner {
+    ui: WindowsGridUi, // TODO: be generic over different UIs
+    cpu: MipsCpu,
+}
+
+impl UiRunner {
+    fn new(code: Vec<u8>) -> UiRunner {
+        let ui = WindowsGridUi::new();
+        
+        let mut cpu = MipsCpu::new();
+        
+        place_code(&mut cpu, code.as_slice(), 0);
+        
+        UiRunner {
+            ui: ui,
+            cpu: cpu
         }
     }
+    
+    fn run(&mut self) {
+        loop {
+            if let Some(interrupt) = self.cpu.run(7) {
+                println!("Interrupt: {}", interrupt);
+                match interrupt {
+                    FaultType::Syscall => {
+                        self.dispatch_syscall();
+                        self.cpu.clear_fault();
+                    },
+                    _ => {
+                    
+                    }
+                }
+                // Run virtual machine...
+                // If it issued an interrupt, process it. 
+                // - One of those is the get-input interrupt.
+                // - One of those is the show-screen interrupt.
+                // - One of them is propose hyperlink
+                
+                match self.ui.get_input_event() {
+                    InputEvent::Close => { return; }
+                    InputEvent::Size(cols, rows) => {
+                        println!("Resized to {} by {}", cols, rows);
+                        //screen_cols = cols;
+                        //screen_rows = rows;
+                    }
+                    InputEvent::MouseDown(col, row) => {
+                        //clicked.insert((col, row));
+                    }
+                    x => {
+                        println!("{}", x);
+                    }
+                }
+                
+                /*if screen_cols>0 {
+                    ui.send_screen(Screen{
+                        width:screen_cols as uint,
+                        glyphs: Vec::from_fn((screen_cols*screen_rows) as uint, |idx| {
+                            let col = idx as u32 % screen_cols;
+                            let row = idx as u32 / screen_cols;
+                            Glyph{
+                                character:0x30 + (screen_rows%10) as uint, 
+                                foreground: if clicked.contains(&(col,row)) { 0x000000 } else { 0x55ff55 }, 
+                                background: if clicked.contains(&(col,row)) { 0x55ff55 } else { 0x000000 }
+                            }
+                        })
+                    });
+                }*/
+            } else {
+                // Signal that the CPU is busy
+                println!("CPU hung");
+                break;
+            }
+        }
+    }
+    
+    fn dispatch_syscall(&mut self) {
+        println!("Issued syscall: {}", self.cpu.regs[2]);
+    
+    }
+}
+
+fn run_window(code: Vec<u8>) {
+    UiRunner::new(code).run();
 }
 
 fn main() {
