@@ -222,7 +222,7 @@ impl MainFrame {
             style: 0x0001 | 0x0002, // CS_HREDRAW | CS_VREDRAW
             icon: icon,
             icon_small: None,
-            cursor: None, //Image::load_cursor_resource(32514), // hourglass
+            cursor: Image::load_cursor_resource(32512), // standard arrow
             background: (5i + 1) as HBRUSH,
             menu: MenuResource::MenuId(MENU_MAIN),
             cls_extra: 0,
