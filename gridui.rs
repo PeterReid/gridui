@@ -45,13 +45,14 @@ static MENU_MAIN: int = 0x201;
 enum InputEvent {
     Close,
     MouseDown(u32, u32),
+    MouseUp(u32, u32),
     KeyDown(u32),
     Size(u32, u32),
 }
 
-#[deriving(Copy, Clone)]
+#[deriving(Copy, Clone, Show)]
 struct Glyph {
-    character: uint,
+    character: u32,
     background: u32,
     foreground: u32,
 }
@@ -137,8 +138,51 @@ impl OnDestroy for MainFrame {
     }
 }
 
+fn character_to_unicode(character: u32) -> char {
+    let lower_a_code = 0x1000;
+    let after_lowers = lower_a_code + 26*16;
+    
+    if lower_a_code <= character && character  < after_lowers && (character & 0x0f)==0 {
+        return ((('a' as u32) + ((character & 0x0ff0)>>4)-1) as u8) as char;
+    }
+    
+    let case_mask = 0x00002000;
+    let upper_a_code = lower_a_code ^ case_mask;
+    let after_uppers = after_lowers ^ case_mask;
+    if upper_a_code <= character && character < after_uppers && (character & 0x0f)==0 {
+        return ((('A' as u32) + ((character & 0x0ff0)>>4)-1) as u8) as char;
+    }
+    
+    match character {
+        0 => ' ',
+        1 => '_',
+        2 => '-',
+        3 => '.',
+        4 => ',',
+        5 => '/',
+        6 => '\\',
+        7 => ':',
+        8 => ';',
+        9 => '~',
+        
+        10 => '0',
+        11 => '1',
+        12 => '2',
+        13 => '3',
+        14 => '4',
+        15 => '5',
+        16 => '6',
+        17 => '7',
+        18 => '8',
+        19 => '9',
+        _ => '?',
+    }
+}
+
 impl OnPaint for MainFrame {
     fn on_paint(&self) {
+        //note: VirtualAlloc the buffer!
+        
         let font = self.font.borrow();
         let pdc = PaintDc::new(self).expect("Paint DC");
         pdc.dc.select_font(&font.expect("font is empty"));
@@ -152,7 +196,7 @@ impl OnPaint for MainFrame {
                         pdc.dc.set_text_color(cell.foreground as COLORREF);
                         pdc.dc.set_background_color(cell.background as COLORREF);
                         
-                        pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, String::from_char(1, cell.character as u8 as char).as_slice());
+                        pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, String::from_char(1, character_to_unicode(cell.character)).as_slice());
                     }
                 }
             }
@@ -192,8 +236,11 @@ impl OnLeftButtonDown for MainFrame {
 }
 
 impl OnLeftButtonUp for MainFrame {
-    fn on_left_button_up(&self, _x: int, _y: int, _flags: u32) {
-        
+    fn on_left_button_up(&self, x: int, y: int, _flags: u32) {
+        let grid_width = self.grid_height/2;
+        let col = (x as u32) / (grid_width as u32);
+        let row = (y as u32) / (self.grid_height as u32);
+        self.input_sink.send(InputEvent::MouseUp(col as u32, row as u32));
     }
 }
 
@@ -357,11 +404,26 @@ fn place_code(cpu: &mut MipsCpu, code: &[u8], index: u32) {
     }
 }
 
+// Things that the application can do wrong to get it crashed
+#[deriving(Show)]
+enum ApplicationException {
+    InvalidSyscall,
+    ScreenTooBig,
+    UnalignedScreenMemory,
+    ClosedByUi,
+}
+
 struct UiRunner {
     ui: WindowsGridUi, // TODO: be generic over different UIs
     cpu: MipsCpu,
+    screen_width: u32,
+    screen_height: u32,
+    cursor_down: bool,
+    cursor_x: u32,
+    cursor_y: u32,
 }
 
+const MAXIMUM_SCREEN_MEMORY : u32 = 400*400;
 impl UiRunner {
     fn new(code: Vec<u8>) -> UiRunner {
         let ui = WindowsGridUi::new();
@@ -372,58 +434,31 @@ impl UiRunner {
         
         UiRunner {
             ui: ui,
-            cpu: cpu
+            cpu: cpu,
+            screen_width: 0,
+            screen_height: 0,
+            cursor_down: false,
+            cursor_x: 0,
+            cursor_y: 0,
         }
     }
     
     fn run(&mut self) {
         loop {
-            if let Some(interrupt) = self.cpu.run(7) {
+            if let Some(interrupt) = self.cpu.run(40) {
                 println!("Interrupt: {}", interrupt);
                 match interrupt {
                     FaultType::Syscall => {
-                        self.dispatch_syscall();
+                        if let Some(error) = self.dispatch_syscall() {
+                            println!("CPU halting executing with {}", error);
+                            break;
+                        }
                         self.cpu.clear_fault();
                     },
                     _ => {
-                    
+                        
                     }
                 }
-                // Run virtual machine...
-                // If it issued an interrupt, process it. 
-                // - One of those is the get-input interrupt.
-                // - One of those is the show-screen interrupt.
-                // - One of them is propose hyperlink
-                
-                match self.ui.get_input_event() {
-                    InputEvent::Close => { return; }
-                    InputEvent::Size(cols, rows) => {
-                        println!("Resized to {} by {}", cols, rows);
-                        //screen_cols = cols;
-                        //screen_rows = rows;
-                    }
-                    InputEvent::MouseDown(col, row) => {
-                        //clicked.insert((col, row));
-                    }
-                    x => {
-                        println!("{}", x);
-                    }
-                }
-                
-                /*if screen_cols>0 {
-                    ui.send_screen(Screen{
-                        width:screen_cols as uint,
-                        glyphs: Vec::from_fn((screen_cols*screen_rows) as uint, |idx| {
-                            let col = idx as u32 % screen_cols;
-                            let row = idx as u32 / screen_cols;
-                            Glyph{
-                                character:0x30 + (screen_rows%10) as uint, 
-                                foreground: if clicked.contains(&(col,row)) { 0x000000 } else { 0x55ff55 }, 
-                                background: if clicked.contains(&(col,row)) { 0x55ff55 } else { 0x000000 }
-                            }
-                        })
-                    });
-                }*/
             } else {
                 // Signal that the CPU is busy
                 println!("CPU hung");
@@ -432,9 +467,81 @@ impl UiRunner {
         }
     }
     
-    fn dispatch_syscall(&mut self) {
+    fn dispatch_syscall(&mut self) -> Option<ApplicationException> {
         println!("Issued syscall: {}", self.cpu.regs[2]);
+        let syscall_number = self.cpu.regs[2];
+        let syscall_arg = self.cpu.regs[3];
+        match syscall_number {
+            1 => { // Show screen
+                let address_base = syscall_arg;
+                if address_base%4 != 0 {
+                    return Some(ApplicationException::UnalignedScreenMemory);
+                }
+                let width = self.cpu.read_mem(address_base);
+                let height = self.cpu.read_mem(address_base+4);
+                let size = (width as u64)*(height as u64);
+                if size >= MAXIMUM_SCREEN_MEMORY as u64 {
+                    return Some(ApplicationException::ScreenTooBig);
+                }
+                let glyph_address_base = address_base + 8;
+                let glyphs = Vec::from_fn(size as uint, |idx| {
+                    let glyph_start_address = glyph_address_base + (idx as u32)*12;
+                    Glyph {
+                        character: self.cpu.read_mem(glyph_start_address),
+                        foreground: self.cpu.read_mem(glyph_start_address + 4),
+                        background: self.cpu.read_mem(glyph_start_address + 8),
+                    }
+                });
+                println!("got {}", glyphs);
+                self.ui.send_screen(Screen{
+                    width: width as uint,
+                    glyphs: glyphs
+                });
+                None
+            }
+            2 => { // Get input event
+                match self.get_application_input_event() {
+                    Some(input_event_type) => { self.cpu.regs[2] = input_event_type; }
+                    None => { return Some(ApplicationException::ClosedByUi); }
+                }
+                None
+            }
+            _ => {
+                // Maybe crash the application here?
+                println!("Unrecognized syscall: {}", syscall_number);
+                Some(ApplicationException::InvalidSyscall)
+            }
+        }
+        
+    }
     
+    fn get_application_input_event(&mut self) -> Option<u32> {
+        loop {
+            match self.ui.get_input_event() {
+                InputEvent::Close => { return None; }
+                InputEvent::Size(cols, rows) => {
+                    println!("Resized to {} by {}", cols, rows);
+                    self.screen_width = cols;
+                    self.screen_height = rows;
+                    return Some(1);
+                }
+                InputEvent::MouseDown(col, row) => {
+                    self.cursor_down = true;
+                    self.cursor_x = col;
+                    self.cursor_y = row;
+                    return Some(2);
+                }
+                InputEvent::MouseUp(col, row) => {
+                    self.cursor_down = false;
+                    self.cursor_x = col;
+                    self.cursor_y = row;
+                    return Some(3);
+                }
+                x => {
+                    println!("{}", x);
+                }
+            }
+        }
     }
 }
 
