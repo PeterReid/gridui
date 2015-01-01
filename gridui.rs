@@ -97,7 +97,7 @@ struct MainFrame {
 
 const WM_CHECK_SCREENS : UINT = 0x0401;
 
-wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_KEYDOWN, WM_KEYUP, WM_SIZE, WM_PAINT, WM_ERASEBKGND, ANY)
+wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_KEYDOWN, WM_KEYUP, WM_SIZE, WM_PAINT, WM_ERASEBKGND, ANY);
 
 impl OnCreate for MainFrame {
     fn on_create(&self, _cs: &CREATESTRUCT) -> bool {
@@ -331,7 +331,7 @@ impl MainFrame {
             ex_style: 0,
         };
 
-        Window::new(instance, Some(wproc as Box<WindowImpl+Send>),
+        Window::new(instance, Some(wproc as Box<WindowImpl + 'static>),
                     wnd_class.classname.as_slice(), &win_params)
     }
     
@@ -381,10 +381,10 @@ impl WindowsGridUi {
         let (tx, rx) = channel();
         let (screen_tx, screen_rx) = channel();
         
-        let instance = Instance::main_instance();
 
         let (window_tx, window_rx) = channel();
         spawn(move|| {
+            let instance = Instance::main_instance();
             let win = MainFrame::new(instance, "Grid UI".to_string(), tx, screen_rx).expect("Failed to create main window");
             win.show(1);
             win.update();
