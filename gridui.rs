@@ -16,23 +16,12 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#![feature(globs, macro_rules, phase)]
-
-#[phase(plugin, link)]
-extern crate log;
-
-extern crate libc;
-
-#[phase(plugin, link)]
-extern crate "rust-windows" as windows;
-
-#[phase(plugin, link)]
-extern crate "mips_cpu" as mips;
+//#[phase(plugin, link)]
+//extern crate "mips_cpu" as mips;
 
 use std::ptr;
 use std::cell::{RefCell};
 use std::comm::channel;
-use std::io::File;
 
 use libc::{c_int};
 
@@ -51,7 +40,7 @@ use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
 
-use mips::cpu::{MipsCpu, FaultType};
+//use mips::cpu::{MipsCpu, FaultType};
 
 // TODO duplicate of hello.rc
 static IDI_ICON: int = 0x101;
@@ -59,8 +48,8 @@ static MENU_MAIN: int = 0x201;
 //static MENU_NEW: int = 0x202;
 //static MENU_EXIT: int = 0x203;
 
-#[deriving(Show)]
-enum InputEvent {
+#[deriving(Copy, Show)]
+pub enum InputEvent {
     Close,
     MouseDown(u32, u32),
     MouseUp(u32, u32),
@@ -69,14 +58,14 @@ enum InputEvent {
 }
 
 #[deriving(Copy, Clone, Show)]
-struct Glyph {
+pub struct Glyph {
     character: u32,
     background: u32,
     foreground: u32,
 }
 
 #[deriving(Clone)]
-struct Screen {
+pub struct Screen {
     glyphs: Vec<Glyph>,
     width: uint,
 }
@@ -365,19 +354,19 @@ impl MainFrame {
     }
 }
 
-trait GridUiInterface {
+pub trait GridUiInterface {
     fn send_screen(&self, screen: Screen);
     fn get_input_event(&self) -> InputEvent;
 }
 
-struct WindowsGridUi {
+pub struct WindowsGridUi {
     screen_sink: Sender<Screen>,
     input_event_source: Receiver<InputEvent>,
     window: Window,
 }
 
 impl WindowsGridUi {
-    fn new() -> WindowsGridUi {
+    pub fn new() -> WindowsGridUi {
         let (tx, rx) = channel();
         let (screen_tx, screen_rx) = channel();
         
@@ -391,8 +380,7 @@ impl WindowsGridUi {
             
             window_tx.send(win);
             
-            let exit_code = main_window_loop();
-            std::os::set_exit_status(exit_code as int);
+            main_window_loop();
         });
         
         WindowsGridUi {
@@ -402,6 +390,8 @@ impl WindowsGridUi {
         }
     }
 }
+
+
 
 impl GridUiInterface for WindowsGridUi {
     fn send_screen(&self, screen: Screen) {
@@ -414,6 +404,8 @@ impl GridUiInterface for WindowsGridUi {
     }
 }
 
+
+/*
 fn place_code(cpu: &mut MipsCpu, code: &[u8], index: u32) {
     // Assumed code length is a multiple of 4
     for (offset, chunk) in code.chunks(4).enumerate() {
@@ -571,3 +563,4 @@ fn main() {
     let contents = File::open(&Path::new("asm/mips1-repositioned.bin")).read_to_end().unwrap_or_else(|_| { panic!("Could not read MIPS code"); } );
     run_window(contents);
 }
+*/
