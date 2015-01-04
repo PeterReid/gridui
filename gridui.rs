@@ -215,8 +215,8 @@ impl OnPaint for MainFrame {
                 
                 pdc.dc.select_object(null_pen);
                 pdc.dc.select_object(dc_brush);
-                pdc.dc.rect((max_filled_x as int, 0), (client_rect.right as int + 1, client_rect.bottom as int + 1));
-                pdc.dc.rect((0, max_filled_y as int), (max_filled_x as int + 1, client_rect.bottom as int + 1));
+                pdc.dc.rect((max_filled_x as int + 1, 0), (client_rect.right as int + 1, client_rect.bottom as int + 1));
+                pdc.dc.rect((0, max_filled_y as int), (max_filled_x as int + 2, client_rect.bottom as int + 1));
             }
         });
         
