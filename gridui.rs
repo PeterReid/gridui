@@ -357,7 +357,7 @@ pub trait GridUiInterface {
 
 pub struct WindowsGridUi {
     screen_sink: Sender<Screen>,
-    input_event_source: Receiver<InputEvent>,
+    pub input_event_source: Receiver<InputEvent>,
     window: Window,
 }
 
