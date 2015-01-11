@@ -146,14 +146,14 @@ fn character_to_unicode(character: u32) -> char {
     let after_lowers = lower_a_code + 26*16;
     
     if lower_a_code <= character && character  < after_lowers && (character & 0x0f)==0 {
-        return ((('a' as u32) + ((character & 0x0ff0)>>4)-1) as u8) as char;
+        return ((('a' as u32) + ((character & 0x0ff0)>>4)) as u8) as char;
     }
     
     let case_mask = 0x00002000;
     let upper_a_code = lower_a_code ^ case_mask;
     let after_uppers = after_lowers ^ case_mask;
     if upper_a_code <= character && character < after_uppers && (character & 0x0f)==0 {
-        return ((('A' as u32) + ((character & 0x0ff0)>>4)-1) as u8) as char;
+        return ((('A' as u32) + ((character & 0x0ff0)>>4)) as u8) as char;
     }
     
     match character {
