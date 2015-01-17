@@ -37,19 +37,13 @@ use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
 
-
-// TODO duplicate of hello.rc
-static IDI_ICON: int = 0x101;
-static MENU_MAIN: int = 0x201;
-//static MENU_NEW: int = 0x202;
-//static MENU_EXIT: int = 0x203;
-
 #[deriving(Copy, Show)]
 pub enum InputEvent {
     Close,
     MouseDown(u32, u32),
     MouseUp(u32, u32),
     KeyDown(u32),
+    KeyUp(u32),
     Size(u32, u32),
 }
 
@@ -141,7 +135,7 @@ impl OnDestroy for MainFrame {
     }
 }
 
-fn character_to_unicode(character: u32) -> char {
+pub fn character_to_unicode(character: u32) -> char {
     let lower_a_code = 0x1000;
     let after_lowers = lower_a_code + 26*16;
     
@@ -247,16 +241,36 @@ impl OnLeftButtonUp for MainFrame {
     }
 }
 
+fn windows_keycode_to_character(keycode: u8) -> Option<u32> {
+    if ('A' as u8) <= keycode && keycode <= ('Z' as u8) {
+        return Some(0x1000 + ((keycode - ('A' as u8)) as u32 << 4));
+    } else if ('0' as u8) <= keycode && keycode <= ('9' as u8) {
+        return Some(10 + (keycode - ('0' as u8)) as u32);
+    } else if (' ' as u8) == keycode {
+        return Some(0);
+    }
+    return None;
+}
+
 impl OnKeyDown for MainFrame {
     fn on_key_down(&self, keycode: u8, flags: u32) -> bool {
-        println!("Key down {} {}", keycode, flags);
+        if let Some(character) = windows_keycode_to_character(keycode) {
+            self.input_sink.send(InputEvent::KeyDown(character));
+        } else {
+            println!("Unknown key down {} {}", keycode, flags);
+        }
+        
         return true;
     }
 }
 
 impl OnKeyUp for MainFrame {
     fn on_key_up(&self, keycode: u8, flags: u32) -> bool {
-        println!("Key up {} {}", keycode, flags);
+        if let Some(character) = windows_keycode_to_character(keycode) {
+            self.input_sink.send(InputEvent::KeyUp(character));
+        } else {
+            println!("Unknown key up {} {}", keycode, flags);
+        }
         return true;
     }
 }
@@ -272,15 +286,14 @@ impl OnMessage for MainFrame {
 }
 impl MainFrame {
     fn new(instance: Instance, title: String, input_sink: Sender<InputEvent>, screen_source: Receiver<Screen>) -> Option<Window> {
-        let icon = Image::load_resource(instance, IDI_ICON, ImageType::IMAGE_ICON, 0, 0);
         let wnd_class = WndClass {
             classname: "MainFrame".to_string(),
             style: 0x0001 | 0x0002, // CS_HREDRAW | CS_VREDRAW
-            icon: icon,
+            icon: None,
             icon_small: None,
             cursor: Image::load_cursor_resource(32512), // standard arrow
             background: (5i + 1) as HBRUSH,
-            menu: MenuResource::MenuId(MENU_MAIN),
+            menu: MenuResource::MenuId(0),
             cls_extra: 0,
             wnd_extra: 0,
         };
