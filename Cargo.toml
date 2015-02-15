@@ -1,0 +1,18 @@
+[package]
+
+name = "gridui"
+version = "0.0.1"
+authors = ["peter@peterreid.net"]
+tags = []
+
+[lib]
+name = "gridui"
+
+[dependencies.rust-windows]
+path = "rust-windows"
+
+[dependencies]
+gdi32-sys = "*"
+kernel32-sys = "*"
+winapi = "*"
+user32-sys = "*"
