@@ -18,14 +18,18 @@
 
 use std::ptr;
 use std::cell::{RefCell};
-use std::comm::channel;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::thread::Thread;
+
+use std::ops::{Deref, DerefMut};
 
 use libc::{c_int};
 
 use windows::main_window_loop;
-use windows::ll::types::{UINT, HBRUSH, COLORREF, LPARAM, WPARAM, LRESULT};
-use windows::ll::all::{PostQuitMessage, GetSysColor, CREATESTRUCT};
-use windows::ll::gdi::{GetStockObject, SetDCBrushColor};
+use winapi::{UINT, HBRUSH, COLORREF, LPARAM, WPARAM, LRESULT};
+use user32::{PostQuitMessage, GetSysColor};
+use winapi::{CREATESTRUCTW};
+use gdi32::{GetStockObject, SetDCBrushColor};
 use windows::instance::Instance;
 use windows::resource::*;
 use windows::window::{WindowImpl, Window, WndClass, WindowParams};
@@ -37,7 +41,7 @@ use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
 
-#[deriving(Copy, Show)]
+#[derive(Copy, Debug)]
 pub enum InputEvent {
     Close,
     MouseDown(u32, u32),
@@ -47,17 +51,17 @@ pub enum InputEvent {
     Size(u32, u32),
 }
 
-#[deriving(Copy, Clone, Show)]
+#[derive(Copy, Clone, Debug)]
 pub struct Glyph {
     pub character: u32,
     pub background: u32,
     pub foreground: u32,
 }
 
-#[deriving(Clone)]
+#[derive(Clone)]
 pub struct Screen {
     pub glyphs: Vec<Glyph>,
-    pub width: uint,
+    pub width: u32,
 }
 
 struct MainFrameState {
@@ -70,7 +74,7 @@ struct MainFrame {
     font: RefCell<Option<Font>>,
     input_sink: Sender<InputEvent>,
     screen_source: Receiver<Screen>,
-    grid_height: uint,
+    grid_height: u32,
     state: RefCell<MainFrameState>,
 }
 
@@ -79,10 +83,10 @@ const WM_CHECK_SCREENS : UINT = 0x0401;
 wnd_proc!(MainFrame, win, WM_CREATE, WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_KEYDOWN, WM_KEYUP, WM_SIZE, WM_PAINT, WM_ERASEBKGND, ANY);
 
 impl OnCreate for MainFrame {
-    fn on_create(&self, _cs: &CREATESTRUCT) -> bool {
+    fn on_create(&self, _cs: &CREATESTRUCTW) -> bool {
         let font_attr = FontAttr {
-            height: self.grid_height as int,
-            width: (self.grid_height/2) as int,
+            height: self.grid_height as isize,
+            width: (self.grid_height/2) as isize,
             escapement: 0,
             orientation: 0,
             weight: 600, // FW_NORMAL. TODO use FW_DONTCARE (0)?
@@ -111,7 +115,7 @@ impl OnCreate for MainFrame {
 }
 
 impl OnSize for MainFrame {
-    fn on_size(&self, width: int, height: int) {
+    fn on_size(&self, width: isize, height: isize) {
         let grid_width = self.grid_height/2;
         let cols = width as u32 / grid_width as u32;
         let rows = height as u32 / self.grid_height as u32;
@@ -188,19 +192,21 @@ impl OnPaint for MainFrame {
             let ref screen = state.screen;
             let grid_width = self.grid_height/2;
             if state.screen.width > 0 {
-                for (row_idx, row) in screen.glyphs.chunks(screen.width).enumerate() {
+                for (row_idx, row) in screen.glyphs.chunks(screen.width as usize).enumerate() {
                     for (col_idx, cell) in row.iter().enumerate() {
                         pdc.dc.set_text_color(cell.foreground as COLORREF);
                         pdc.dc.set_background_color(cell.background as COLORREF);
                         
-                        pdc.dc.text_out((col_idx*grid_width) as int, (row_idx*self.grid_height) as int, String::from_char(1, character_to_unicode(cell.character)).as_slice());
+                        let mut char_str = String::new();
+                        char_str.push(character_to_unicode(cell.character));
+                        pdc.dc.text_out((col_idx*grid_width as usize) as isize, (row_idx*(self.grid_height as usize)) as isize, &char_str[]);
                     }
                 }
             }
             
             if let Some(client_rect) = self.win.client_rect(){
                 let max_filled_x = screen.width * grid_width;
-                let max_filled_y = if screen.width>0 { (screen.glyphs.len() / screen.width) * self.grid_height } else { 0 };
+                let max_filled_y = if screen.width>0 { (screen.glyphs.len() as u32 / screen.width) * self.grid_height } else { 0 };
                 
                 let filler_color = unsafe { GetSysColor(15 /* COLOR_3DFACE */) as COLORREF };
                 unsafe { SetDCBrushColor(pdc.dc.raw, filler_color) };
@@ -209,8 +215,8 @@ impl OnPaint for MainFrame {
                 
                 pdc.dc.select_object(null_pen);
                 pdc.dc.select_object(dc_brush);
-                pdc.dc.rect((max_filled_x as int + 1, 0), (client_rect.right as int + 1, client_rect.bottom as int + 1));
-                pdc.dc.rect((0, max_filled_y as int), (max_filled_x as int + 2, client_rect.bottom as int + 1));
+                pdc.dc.rect((max_filled_x as isize + 1, 0), (client_rect.right as isize + 1, client_rect.bottom as isize + 1));
+                pdc.dc.rect((0, max_filled_y as isize), (max_filled_x as isize + 2, client_rect.bottom as isize + 1));
             }
         });
         
@@ -224,7 +230,7 @@ impl OnEraseBackground for MainFrame {
 }
 
 impl OnLeftButtonDown for MainFrame {
-    fn on_left_button_down(&self, x: int, y: int, _flags: u32) {
+    fn on_left_button_down(&self, x: isize, y: isize, _flags: u32) {
         let grid_width = self.grid_height/2;
         let col = (x as u32) / (grid_width as u32);
         let row = (y as u32) / (self.grid_height as u32);
@@ -233,7 +239,7 @@ impl OnLeftButtonDown for MainFrame {
 }
 
 impl OnLeftButtonUp for MainFrame {
-    fn on_left_button_up(&self, x: int, y: int, _flags: u32) {
+    fn on_left_button_up(&self, x: isize, y: isize, _flags: u32) {
         let grid_width = self.grid_height/2;
         let col = (x as u32) / (grid_width as u32);
         let row = (y as u32) / (self.grid_height as u32);
@@ -243,7 +249,7 @@ impl OnLeftButtonUp for MainFrame {
 
 fn windows_keycode_to_character(keycode: u8) -> Option<u32> {
     if ('A' as u8) <= keycode && keycode <= ('Z' as u8) {
-        return Some(0x1000 + ((keycode - ('A' as u8)) as u32 << 4));
+        return Some(0x1000 + (((keycode - ('A' as u8)) as u32) << 4));
     } else if ('0' as u8) <= keycode && keycode <= ('9' as u8) {
         return Some(10 + (keycode - ('0' as u8)) as u32);
     } else if (' ' as u8) == keycode {
@@ -292,7 +298,7 @@ impl MainFrame {
             icon: None,
             icon_small: None,
             cursor: Image::load_cursor_resource(32512), // standard arrow
-            background: (5i + 1) as HBRUSH,
+            background: (5u32 + 1) as HBRUSH,
             menu: MenuResource::MenuId(0),
             cls_extra: 0,
             wnd_extra: 0,
@@ -302,7 +308,7 @@ impl MainFrame {
             return None;
         }
 
-        let wproc = box MainFrame {
+        let wproc = Box::new(MainFrame {
             win: Window::null(),
             font: RefCell::new(None),
             input_sink: input_sink,
@@ -315,7 +321,7 @@ impl MainFrame {
                 announced_grid_size: (-1,-1),  
             }),
             grid_height: 30,
-        };
+        });
 
         let win_params = WindowParams {
             window_name: title,
@@ -330,16 +336,20 @@ impl MainFrame {
         };
 
         Window::new(instance, Some(wproc as Box<WindowImpl + 'static>),
-                    wnd_class.classname.as_slice(), &win_params)
+                    &wnd_class.classname[], &win_params)
     }
     
-    fn with_state_mut(&self, f: |&mut MainFrameState|) {
+    fn with_state_mut<F>(&self, f: F)
+        where F: FnOnce(&mut MainFrameState)
+    {
         if let Some(mut state) = self.state.try_borrow_mut() {
             f(state.deref_mut());
         }
     }
     
-    fn with_state(&self, f: |&MainFrameState|) {
+    fn with_state<F>(&self, f: F)
+        where F: FnOnce(&MainFrameState)
+    {
         if let Some(state) = self.state.try_borrow() {
             f(state.deref());
         }
@@ -381,7 +391,7 @@ impl WindowsGridUi {
         
 
         let (window_tx, window_rx) = channel();
-        spawn(move|| {
+        Thread::spawn(move|| {
             let instance = Instance::main_instance();
             let win = MainFrame::new(instance, "Grid UI".to_string(), tx, screen_rx).expect("Failed to create main window");
             win.show(1);
@@ -393,7 +403,7 @@ impl WindowsGridUi {
         });
         
         WindowsGridUi {
-            window: window_rx.recv(),
+            window: window_rx.recv().ok().expect("Failed to create window"),
             screen_sink: screen_tx,
             input_event_source: rx,
         }
@@ -407,6 +417,6 @@ impl GridUiInterface for WindowsGridUi {
     }
     
     fn get_input_event(&self) -> InputEvent {
-        self.input_event_source.recv()
+        self.input_event_source.recv().ok().expect("GuidUiInterface failed to receive an input event")
     }
 }
