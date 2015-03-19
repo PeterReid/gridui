@@ -5,7 +5,7 @@
 //#[phase(plugin, link)]
 //extern crate log;
 
-#![feature(libc, std_misc)]
+#![feature(collections, libc, std_misc)]
 
 extern crate libc;
 

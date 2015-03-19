@@ -17,9 +17,9 @@
 */
 
 use std::ptr;
-use std::cell::{RefCell};
+use std::cell::{RefCell, BorrowState};
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::thread::Thread;
+use std::thread;
 
 use std::ops::{Deref, DerefMut};
 
@@ -125,7 +125,7 @@ impl OnSize for MainFrame {
         self.with_state_mut(|state: &mut MainFrameState| {
             if size != state.announced_grid_size {
                 state.announced_grid_size = size;
-                self.input_sink.send(InputEvent::Size(cols, rows));
+                self.send_event(InputEvent::Size(cols, rows));
             }
         });
     }
@@ -136,7 +136,7 @@ impl OnDestroy for MainFrame {
         unsafe {
             PostQuitMessage(0 as c_int);
         }
-        self.input_sink.send(InputEvent::Close);
+        self.send_event(InputEvent::Close);
     }
 }
 
@@ -159,7 +159,7 @@ impl OnPaint for MainFrame {
                         
                         let mut char_str = String::new();
                         char_str.push(glyphcode::as_char(cell.character).unwrap_or(' '));
-                        pdc.dc.text_out((col_idx*grid_width as usize) as isize, (row_idx*(self.grid_height as usize)) as isize, &char_str[]);
+                        pdc.dc.text_out((col_idx*grid_width as usize) as isize, (row_idx*(self.grid_height as usize)) as isize, &char_str[..]);
                     }
                 }
             }
@@ -194,7 +194,7 @@ impl OnLeftButtonDown for MainFrame {
         let grid_width = self.grid_height/2;
         let col = (x as u32) / (grid_width as u32);
         let row = (y as u32) / (self.grid_height as u32);
-        self.input_sink.send(InputEvent::MouseDown(col as u32, row as u32));
+        self.send_event(InputEvent::MouseDown(col as u32, row as u32));
     }
 }
 
@@ -203,7 +203,7 @@ impl OnLeftButtonUp for MainFrame {
         let grid_width = self.grid_height/2;
         let col = (x as u32) / (grid_width as u32);
         let row = (y as u32) / (self.grid_height as u32);
-        self.input_sink.send(InputEvent::MouseUp(col as u32, row as u32));
+        self.send_event(InputEvent::MouseUp(col as u32, row as u32));
     }
 }
 
@@ -221,7 +221,7 @@ fn windows_keycode_to_character(keycode: u8) -> Option<u32> {
 impl OnKeyDown for MainFrame {
     fn on_key_down(&self, keycode: u8, flags: u32) -> bool {
         if let Some(character) = windows_keycode_to_character(keycode) {
-            self.input_sink.send(InputEvent::KeyDown(character));
+            self.send_event(InputEvent::KeyDown(character));
         } else {
             println!("Unknown key down {} {}", keycode, flags);
         }
@@ -233,7 +233,7 @@ impl OnKeyDown for MainFrame {
 impl OnKeyUp for MainFrame {
     fn on_key_up(&self, keycode: u8, flags: u32) -> bool {
         if let Some(character) = windows_keycode_to_character(keycode) {
-            self.input_sink.send(InputEvent::KeyUp(character));
+            self.send_event(InputEvent::KeyUp(character));
         } else {
             println!("Unknown key up {} {}", keycode, flags);
         }
@@ -296,22 +296,24 @@ impl MainFrame {
         };
 
         Window::new(instance, Some(wproc as Box<WindowImpl + 'static>),
-                    &wnd_class.classname[], &win_params)
+                    &wnd_class.classname[..], &win_params)
     }
     
     fn with_state_mut<F>(&self, f: F)
         where F: FnOnce(&mut MainFrameState)
     {
-        if let Some(mut state) = self.state.try_borrow_mut() {
-            f(state.deref_mut());
+        match self.state.borrow_state() {
+            BorrowState::Unused => { f(self.state.borrow_mut().deref_mut()); }
+            _ => {}
         }
     }
     
     fn with_state<F>(&self, f: F)
         where F: FnOnce(&MainFrameState)
     {
-        if let Some(state) = self.state.try_borrow() {
-            f(state.deref());
+        match self.state.borrow_state() {
+            BorrowState::Unused | BorrowState::Reading => { f(self.state.borrow().deref()); }
+            _ => {}
         }
     }
     
@@ -330,6 +332,10 @@ impl MainFrame {
                 self.win.invalidate(false);
             });
         }
+    }
+    
+    fn send_event(&self, evt: InputEvent) {
+        self.input_sink.send(evt).ok().expect("Window interface unexpectedly closed")
     }
 }
 
@@ -351,13 +357,13 @@ impl WindowsGridUi {
         
 
         let (window_tx, window_rx) = channel();
-        Thread::spawn(move|| {
+        thread::spawn(move|| {
             let instance = Instance::main_instance();
             let win = MainFrame::new(instance, "Grid UI".to_string(), tx, screen_rx).expect("Failed to create main window");
             win.show(1);
             win.update();
             
-            window_tx.send(win);
+            window_tx.send(win).ok().expect("Failed to attach created window");
             
             main_window_loop();
         });
@@ -372,7 +378,7 @@ impl WindowsGridUi {
 
 impl GridUiInterface for WindowsGridUi {
     fn send_screen(&self, screen: Screen) {
-        self.screen_sink.send(screen);
+        self.screen_sink.send(screen).ok().expect("Could not send screen to window, which has unexpectedly closed");
         self.window.post_message(WM_CHECK_SCREENS,0,0);
     }
     
