@@ -40,6 +40,7 @@ use windows::gdi::{PaintDc};
 use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
+use glyphcode;
 
 #[derive(Copy, Debug)]
 pub enum InputEvent {
@@ -139,47 +140,6 @@ impl OnDestroy for MainFrame {
     }
 }
 
-pub fn character_to_unicode(character: u32) -> char {
-    let lower_a_code = 0x1000;
-    let after_lowers = lower_a_code + 26*16;
-    
-    if lower_a_code <= character && character  < after_lowers && (character & 0x0f)==0 {
-        return ((('a' as u32) + ((character & 0x0ff0)>>4)) as u8) as char;
-    }
-    
-    let case_mask = 0x00002000;
-    let upper_a_code = lower_a_code ^ case_mask;
-    let after_uppers = after_lowers ^ case_mask;
-    if upper_a_code <= character && character < after_uppers && (character & 0x0f)==0 {
-        return ((('A' as u32) + ((character & 0x0ff0)>>4)) as u8) as char;
-    }
-    
-    match character {
-        0 => ' ',
-        1 => '_',
-        2 => '-',
-        3 => '.',
-        4 => ',',
-        5 => '/',
-        6 => '\\',
-        7 => ':',
-        8 => ';',
-        9 => '~',
-        
-        10 => '0',
-        11 => '1',
-        12 => '2',
-        13 => '3',
-        14 => '4',
-        15 => '5',
-        16 => '6',
-        17 => '7',
-        18 => '8',
-        19 => '9',
-        _ => '?',
-    }
-}
-
 impl OnPaint for MainFrame {
     fn on_paint(&self) {
         //note: VirtualAlloc the buffer!
@@ -198,7 +158,7 @@ impl OnPaint for MainFrame {
                         pdc.dc.set_background_color(cell.background as COLORREF);
                         
                         let mut char_str = String::new();
-                        char_str.push(character_to_unicode(cell.character));
+                        char_str.push(glyphcode::as_char(cell.character).unwrap_or(' '));
                         pdc.dc.text_out((col_idx*grid_width as usize) as isize, (row_idx*(self.grid_height as usize)) as isize, &char_str[]);
                     }
                 }
