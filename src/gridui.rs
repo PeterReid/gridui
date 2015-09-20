@@ -36,13 +36,13 @@ use windows::window::{WindowImpl, Window, WndClass, WindowParams};
 use windows::window::{OnCreate, OnSize, OnDestroy, OnPaint, OnEraseBackground, OnMessage};
 use windows::window::{OnLeftButtonDown, OnLeftButtonUp, OnKeyDown, OnKeyUp};
 use windows::window;
-use windows::gdi::{PaintDc};
+use windows::gdi::{PaintDc, MemoryDc};
 use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
 use glyphcode;
 
-#[derive(Copy, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum InputEvent {
     Close,
     MouseDown(u32, u32),
@@ -147,6 +147,11 @@ impl OnPaint for MainFrame {
         let font = self.font.borrow();
         let pdc = PaintDc::new(self).expect("Paint DC");
         pdc.dc.select_font(&font.expect("font is empty"));
+        
+        let bmp = pdc.dc.create_compatible_bitmap(50,50);
+        let mem_dc = MemoryDc::new(&pdc.dc).unwrap();
+        mem_dc.dc.select_bitmap(&bmp);
+        //mem_dc.fill_rect((0,0), (5,10), 
         
         self.with_state(|state: & MainFrameState| {
             let ref screen = state.screen;

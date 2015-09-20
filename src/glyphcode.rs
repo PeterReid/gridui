@@ -1,3 +1,4 @@
+use unicode_segmentation::UnicodeSegmentation;
 
 pub type GlyphCode = u32;
 
@@ -92,11 +93,12 @@ pub fn to_string(glyphcodes: &[u32]) -> Option<String> {
 
 pub fn from_str(s: &str) -> Option<Vec<u32>> {
     let mut accum = Vec::new();
-    for grapheme in s.graphemes(true) {
+    
+    for grapheme in UnicodeSegmentation::graphemes(s, true) {
         if grapheme.len()!=1 {
             return None;
         }
-        if let Some(glyphcode) = from_char(grapheme.char_at(0)) {
+        if let Some(glyphcode) = grapheme.chars().next().and_then(|x| from_char(x)) {
             accum.push(glyphcode);
         } else {
             return None;

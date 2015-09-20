@@ -5,17 +5,18 @@
 //#[phase(plugin, link)]
 //extern crate log;
 
-#![feature(collections, libc, std_misc)]
+#![feature(libc, borrow_state)]
 
 extern crate libc;
 
 extern crate winapi;
 
 #[macro_use]
-extern crate "rust-windows" as windows;
-extern crate "gdi32-sys" as gdi32;
-extern crate "kernel32-sys" as kernel32;
-extern crate "user32-sys" as user32;
+extern crate rust_windows as windows;
+extern crate gdi32 as gdi32;
+extern crate kernel32 as kernel32;
+extern crate user32 as user32;
+extern crate unicode_segmentation;
 
 pub mod gridui;
 pub mod glyphcode;
