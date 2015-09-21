@@ -41,29 +41,9 @@ use windows::font::Font;
 use windows::font;
 use windows::font::{Family, Pitch, Quality, CharSet, OutputPrecision, ClipPrecision, FontAttr};
 use glyphcode;
+use input_event::InputEvent;
+use screen::{Glyph, Screen};
 
-#[derive(Debug, Copy, Clone)]
-pub enum InputEvent {
-    Close,
-    MouseDown(u32, u32),
-    MouseUp(u32, u32),
-    KeyDown(u32),
-    KeyUp(u32),
-    Size(u32, u32),
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Glyph {
-    pub character: u32,
-    pub background: u32,
-    pub foreground: u32,
-}
-
-#[derive(Clone)]
-pub struct Screen {
-    pub glyphs: Vec<Glyph>,
-    pub width: u32,
-}
 
 struct MainFrameState {
     screen: Screen,

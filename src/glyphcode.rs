@@ -136,7 +136,7 @@ mod test {
 
     fn test_str(s: &str, expected: &[u32]) {
         assert_eq!(from_str(s), Some(expected.to_vec()));
-        assert_eq!(to_string(&from_str(s).unwrap()[]), Some(s.to_string()));
+        assert_eq!(to_string(&from_str(s).unwrap()[..]), Some(s.to_string()));
     }
 
     #[test]
